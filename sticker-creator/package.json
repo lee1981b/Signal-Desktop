@@ -38,7 +38,7 @@
     "protobufjs-cli": "1.1.1",
     "qrcode-generator": "1.4.4",
     "react": "18.2.0",
-    "react-dom": "18.2.0",
+    "react-dom": "18.3.1",
     "react-dropzone": "14.2.3",
     "react-intl": "6.6.8",
     "react-popper": "2.3.0",

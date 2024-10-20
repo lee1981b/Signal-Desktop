@@ -1604,8 +1604,9 @@ export async function startApp(): Promise<void> {
     // Download backup before enabling request handler and storage service
     try {
       await backupsService.download({
-        onProgress: (currentBytes, totalBytes) => {
+        onProgress: (backupStep, currentBytes, totalBytes) => {
           window.reduxActions.installer.updateBackupImportProgress({
+            backupStep,
             currentBytes,
             totalBytes,
           });
@@ -3183,9 +3184,13 @@ export async function startApp(): Promise<void> {
     switch (eventType) {
       case FETCH_LATEST_ENUM.LOCAL_PROFILE: {
         log.info('onFetchLatestSync: fetching latest local profile');
-        const ourAci = window.textsecure.storage.user.getAci();
-        const ourE164 = window.textsecure.storage.user.getNumber();
-        await getProfile(ourAci, ourE164);
+        const ourAci = window.textsecure.storage.user.getAci() ?? null;
+        const ourE164 = window.textsecure.storage.user.getNumber() ?? null;
+        await getProfile({
+          serviceId: ourAci,
+          e164: ourE164,
+          groupId: null,
+        });
         break;
       }
       case FETCH_LATEST_ENUM.STORAGE_MANIFEST:

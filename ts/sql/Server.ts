@@ -172,6 +172,7 @@ import {
 } from '../types/CallDisposition';
 import {
   callLinkExists,
+  defunctCallLinkExists,
   getAllCallLinks,
   getCallLinkByRoomId,
   getCallLinkRecordByRoomId,
@@ -189,6 +190,7 @@ import {
   beginDeleteCallLink,
   deleteCallLinkFromSync,
   _removeAllCallLinks,
+  insertDefunctCallLink,
 } from './server/callLinks';
 import {
   replaceAllEndorsementsForGroup,
@@ -313,6 +315,7 @@ export const DataReader: ServerReadableInterface = {
   hasGroupCallHistoryMessage,
 
   callLinkExists,
+  defunctCallLinkExists,
   getAllCallLinks,
   getCallLinkByRoomId,
   getCallLinkRecordByRoomId,
@@ -460,6 +463,7 @@ export const DataWriter: ServerWritableInterface = {
   finalizeDeleteCallLink,
   _removeAllCallLinks,
   deleteCallLinkFromSync,
+  insertDefunctCallLink,
   migrateConversationMessages,
   saveEditedMessage,
   saveEditedMessages,
@@ -4520,9 +4524,10 @@ function getNextTapToViewMessageTimestampToAgeOut(
   return isNormalNumber(result) ? result : undefined;
 }
 
-function getTapToViewMessagesNeedingErase(db: ReadableDB): Array<MessageType> {
-  const THIRTY_DAYS_AGO = Date.now() - 30 * 24 * 60 * 60 * 1000;
-
+function getTapToViewMessagesNeedingErase(
+  db: ReadableDB,
+  maxTimestamp: number
+): Array<MessageType> {
   const rows: JSONRows = db
     .prepare<Query>(
       `
@@ -4531,12 +4536,12 @@ function getTapToViewMessagesNeedingErase(db: ReadableDB): Array<MessageType> {
       WHERE
         isViewOnce = 1
         AND (isErased IS NULL OR isErased != 1)
-        AND received_at <= $THIRTY_DAYS_AGO
+        AND received_at <= $maxTimestamp
       ORDER BY received_at ASC, sent_at ASC;
       `
     )
     .all({
-      THIRTY_DAYS_AGO,
+      maxTimestamp,
     });
 
   return rows.map(row => jsonToObject(row.json));
@@ -6436,6 +6441,7 @@ function removeAll(db: WritableDB): void {
       DELETE FROM callLinks;
       DELETE FROM callsHistory;
       DELETE FROM conversations;
+      DELETE FROM defunctCallLinks;
       DELETE FROM emojis;
       DELETE FROM groupCallRingCancellations;
       DELETE FROM groupSendCombinedEndorsement;

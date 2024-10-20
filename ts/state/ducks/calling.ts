@@ -1556,8 +1556,7 @@ function handleCallLinkUpdate(
     // This job will throttle requests to the calling server.
     drop(
       callLinkRefreshJobQueue.add({
-        roomId: callLink.roomId,
-        deleteLocallyIfMissingOnCallingServer: false,
+        rootKey,
         source: 'handleCallLinkUpdate',
       })
     );
@@ -1947,22 +1946,6 @@ function _setPresenting(
       source: sourceToPresent,
       callLinkRootKey: rootKey,
     });
-
-    if (mediaStream != null) {
-      // If the screen sharing stream is terminated early - stop screen sharing
-      mediaStream.getVideoTracks()[0]?.addEventListener(
-        'ended',
-        () => {
-          const currentSource = getPresentingSource(getState());
-
-          // Verify that the source didn't change while we were waiting.
-          if (currentSource === sourceToPresent) {
-            dispatch(cancelPresenting());
-          }
-        },
-        { once: true }
-      );
-    }
 
     dispatch({
       type: SET_PRESENTING,

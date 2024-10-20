@@ -72,12 +72,9 @@ import {
   fromRootKeyBytes,
   getRoomIdFromRootKey,
 } from '../util/callLinksRingrtc';
-import {
-  CALL_LINK_DELETED_STORAGE_RECORD_TTL,
-  fromAdminKeyBytes,
-  toCallHistoryFromUnusedCallLink,
-} from '../util/callLinks';
+import { fromAdminKeyBytes } from '../util/callLinks';
 import { isOlderThan } from '../util/timestamp';
+import { getMessageQueueTime } from '../util/getMessageQueueTime';
 import { callLinkRefreshJobQueue } from '../jobs/callLinkRefreshJobQueue';
 
 const MY_STORY_BYTES = uuidToBytes(MY_STORY_ID);
@@ -1395,7 +1392,7 @@ export async function mergeAccountRecord(
     : PhoneNumberDiscoverability.Discoverable;
   await window.storage.put('phoneNumberDiscoverability', discoverability);
 
-  if (profileKey) {
+  if (profileKey && profileKey.byteLength > 0) {
     void ourProfileKeyService.set(profileKey);
   }
 
@@ -1657,14 +1654,14 @@ export async function mergeAccountRecord(
   });
 
   let needsProfileFetch = false;
-  if (profileKey && profileKey.length > 0) {
+  if (profileKey && profileKey.byteLength > 0) {
     needsProfileFetch = await conversation.setProfileKey(
       Bytes.toBase64(profileKey),
       { viaStorageServiceSync: true, reason: 'mergeAccountRecord' }
     );
 
     const avatarUrl = dropNull(accountRecord.avatarUrl);
-    await conversation.setProfileAvatar(avatarUrl, profileKey);
+    await conversation.setAndMaybeFetchProfileAvatar(avatarUrl, profileKey);
     await window.storage.put('avatarUrl', avatarUrl);
   }
 
@@ -1977,15 +1974,16 @@ export async function mergeCallLinkRecord(
   const localCallLinkDbRecord =
     await DataReader.getCallLinkRecordByRoomId(roomId);
 
-  const deletedAt: number | null =
-    callLinkRecord.deletedAtTimestampMs != null
-      ? getTimestampFromLong(callLinkRecord.deletedAtTimestampMs)
-      : null;
-  const shouldDrop =
-    deletedAt != null &&
-    isOlderThan(deletedAt, CALL_LINK_DELETED_STORAGE_RECORD_TTL);
+  // Note deletedAtTimestampMs can be 0
+  const deletedAtTimestampMs = callLinkRecord.deletedAtTimestampMs?.toNumber();
+  const deletedAt = deletedAtTimestampMs || null;
+  const shouldDrop = Boolean(
+    deletedAt && isOlderThan(deletedAt, getMessageQueueTime())
+  );
   if (shouldDrop) {
-    details.push('expired deleted call link; scheduling for removal');
+    details.push(
+      `expired deleted call link deletedAt=${deletedAt}; scheduling for removal`
+    );
   }
 
   const callLinkDbRecord: CallLinkRecord = {
@@ -2009,31 +2007,28 @@ export async function mergeCallLinkRecord(
 
   if (!localCallLinkDbRecord) {
     if (deletedAt) {
-      log.info(
-        `${logId}: Found deleted call link with no matching local record, skipping`
+      details.push(
+        `skipping deleted call link with no matching local record deletedAt=${deletedAt}`
       );
+    } else if (await DataReader.defunctCallLinkExists(roomId)) {
+      details.push('skipping known defunct call link');
     } else {
-      log.info(`${logId}: Discovered new call link, creating locally`);
-      details.push('creating call link');
+      details.push('new call link, enqueueing call link refresh and create');
 
-      // Create CallLink and call history item
+      // Queue a job to refresh the call link to confirm its existence.
+      // Include the bundle of call link data so we can insert the call link
+      // after confirmation.
       const callLink = callLinkFromRecord(callLinkDbRecord);
-      const callHistory = toCallHistoryFromUnusedCallLink(callLink);
-      await Promise.all([
-        DataWriter.insertCallLink(callLink),
-        DataWriter.saveCallHistory(callHistory),
-      ]);
-
-      // The local DB record is a placeholder until confirmed refreshed. If it's gone from
-      // the calling server then delete the local record.
       drop(
         callLinkRefreshJobQueue.add({
-          roomId: callLink.roomId,
-          deleteLocallyIfMissingOnCallingServer: true,
-          source: 'storage.mergeCallLinkRecord',
+          rootKey: callLink.rootKey,
+          adminKey: callLink.adminKey,
+          storageID: callLink.storageID,
+          storageVersion: callLink.storageVersion,
+          storageUnknownFields: callLink.storageUnknownFields,
+          source: `storage.mergeCallLinkRecord(${redactedStorageID})`,
         })
       );
-      window.reduxActions.callHistory.addCallHistory(callHistory);
     }
 
     return {
